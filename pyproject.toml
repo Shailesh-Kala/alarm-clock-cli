@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "alarm-clock-cli"
+version = "0.1.0"
+description = "A terminal alarm clock in Python - standard library only"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [{ name = "Shailesh Kala" }]
+keywords = ["alarm", "clock", "cli", "terminal"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Utilities",
+]
+
+# Runtime dependencies are deliberately empty: decision D4, standard library only.
+dependencies = []
+
+[project.scripts]
+alarm = "alarm_clock.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Shailesh-Kala/alarm-clock-cli"
+
+[tool.setuptools]
+packages = ["alarm_clock"]

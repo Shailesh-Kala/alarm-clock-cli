@@ -1,9 +1,9 @@
 # Implementation Plan — `alarm-clock-cli`
 
-**Status:** Draft for review · **Date:** 2026-09-21
+**Status:** Implemented in v0.1.0 · **Date:** 2026-09-21
 **Companions:** [requirements.md](requirements.md) · [design.md](design.md)
 
-Nothing in this plan is built until the two documents above are approved.
+All six phases are complete. The verification record is in section 3a.
 
 ---
 
@@ -235,6 +235,38 @@ export ALARM_CLOCK_HOME=/tmp/alarm-verify && rm -rf "$ALARM_CLOCK_HOME"
 - [ ] `--once` exits after the first completed alarm
 
 ---
+
+## 3a. Verification record
+
+The checklist above was run end to end on **2026-09-21** against macOS 15.5 and
+CPython 3.11.3. Every item passed. Notes on the ones that needed real time or a
+simulated machine suspend:
+
+| Check | How it was exercised | Result |
+|---|---|---|
+| Fires within a second of the minute | Alarm set one minute out; banner timestamped `18:00:00` | Pass |
+| Snooze cycle and give-up | `--ring-seconds 3 --snooze-minutes 1 --max-snoozes 2` | Rang 3 times, then disabled itself with `last_fired_at` set |
+| Ctrl-C dismisses, loop survives | `kill -INT` mid-ring, then again while idle | Dismissed, stayed alive, then exited |
+| Live reload | `add`, `remove` and `disable` from a second terminal | All three noticed within a tick |
+| Missed alarm after suspend | `SIGSTOP` 45 s before the alarm, `SIGCONT` 135 s after | Reported missed, rescheduled to tomorrow, did not ring |
+| Rings after a short suspend | Same, resumed 30 s after | Rang normally |
+| Bell and in-place redraw | Run under a pty via `script` | 2 BEL bytes over a 4 s ring, `\r` redraw confirmed |
+| Store errors | Corrupt JSON, wrong version, bad time, duplicate ids, unwritable directory | One clear sentence each, exit 1, no tracebacks |
+
+**Two defects were found and fixed by this pass:**
+
+1. **Buffered output.** `alarm run > file` produced nothing for minutes, because
+   Python block-buffers stdout when it is not a terminal. For a long-running
+   process whose entire job is to report events as they happen, this made
+   redirected output useless. Fixed by forcing line buffering in the run loop.
+2. **Dead constant.** `DOUBLE_INTERRUPT_SECONDS` was specified, then made
+   unnecessary by the counter-based signal design. Removed rather than left
+   behind, and design section 8 was rewritten to describe what was actually built.
+
+A third issue was a fault in the test method, not the program: the first
+suspend-test run was skewed by machine load and suspended the process *after*
+the alarm had already rung, which would have reported a false pass. The test was
+rewritten to assert its own timing window before drawing a conclusion.
 
 ## 4. Effort estimate
 

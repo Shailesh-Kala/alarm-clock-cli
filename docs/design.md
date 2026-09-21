@@ -1,6 +1,10 @@
 # Design — `alarm-clock-cli`
 
-**Status:** Draft for review · **Date:** 2026-09-21 · **Companion to:** [requirements.md](requirements.md)
+**Status:** Implemented in v0.1.0 · **Date:** 2026-09-21 · **Companion to:** [requirements.md](requirements.md)
+
+This document has been reconciled with the shipped code; where the build
+diverged from the original design, the deviation and its reason are recorded in
+place rather than quietly edited away.
 
 ---
 
@@ -251,40 +255,58 @@ time, which is the least surprising behaviour.
 ### 7.1 Ringing output
 
 ```
-╔══════════════════════════════════════════════════════════╗
-║                    ⏰  A L A R M  ⏰                      ║
-╠══════════════════════════════════════════════════════════╣
-║  Standup                                                 ║
-║  Scheduled 07:30   ·   Now 07:30:02                      ║
-╠══════════════════════════════════════════════════════════╣
-║  Ctrl-C to dismiss  ·  ignore to snooze 9m  (2 left)     ║
-║  ringing 47s                                             ║
-╚══════════════════════════════════════════════════════════╝
++============================================================+
+|                         A L A R M                          |
++============================================================+
+|  Standup                                                   |
+|  Scheduled 07:30   .   Now 07:30:02                        |
++============================================================+
+|  Ctrl-C to dismiss  .  ignore to snooze 9m (2 left)        |
++============================================================+
+  ringing -  47s left
 ```
 
-The last line is redrawn in place with `\r`; the BEL is emitted every 2 seconds
-rather than every tick, so the terminal is insistent without being unusable.
-Box-drawing characters degrade acceptably; no colour is required for the banner
-to be readable (NFR-2).
+Two deviations from the original sketch, both decided while building:
 
----
+- **Pure ASCII, no emoji.** Emoji are double-width and render at different
+  widths across terminals, which breaks the alignment of every row in the box.
+  A banner that arrives visibly broken is worse than a plainer one.
+- **The countdown sits below the box, not inside it.** Redrawing a line inside
+  the box would need cursor movement; below it, a plain `\r` suffices. The
+  status line is wiped when the ring ends so the next output starts clean.
+
+Long labels are truncated with an ellipsis to fit the box. The BEL is emitted
+every 2 seconds rather than every tick - insistent without making the terminal
+unusable. On a non-TTY stdout (redirected or piped) the in-place redraw is
+replaced by one progress line every 15 seconds.
 
 ## 8. Signal handling
 
 `SIGINT` is the only signal handled, and its meaning is contextual (FR-8):
 
-| Context | First `Ctrl-C` | Second within 2 s |
-|---|---|---|
-| Ringing | Dismiss this alarm, keep looping | Exit the program |
-| Idle | Exit cleanly | — |
+| Context | Ctrl-C |
+|---|---|
+| Ringing | Dismiss this alarm, keep looping |
+| Ringing, two presses before the next poll | Exit the program |
+| Idle | Exit cleanly |
 
-Implementation: a module-level handler sets a flag and records the timestamp; the
-ring loop and the idle sleep both poll it. No exceptions are raised across the
-signal boundary, which keeps the control flow visible on the page.
+**Implementation:** the handler does nothing but increment a counter.
+`InterruptFlag.take()` returns the presses since the last call and clears them;
+the ring loop and the idle loop each decide what that means. No exception is
+raised across the signal boundary, so the control flow stays visible on the page.
 
-`SIGTERM` is left at its default — a `kill` should stop the process.
+This is simpler than the two-second window originally planned, and gives the
+same guarantee that the user is never trapped: one press dismisses and returns
+to idle, where the *next* press exits. Two presses landing in the same 100 ms
+poll are read as "get me out", not as two dismissals. The planned
+`DOUBLE_INTERRUPT_SECONDS` constant turned out to be unnecessary and was removed
+rather than left in place as a lie about how the program works.
 
----
+A consequence of PEP 475: `time.sleep()` resumes after a handler returns, so
+responsiveness comes from sleeping in 100 ms slices (`POLL_SECONDS`) rather than
+one long sleep.
+
+`SIGTERM` is left at its default - a `kill` should stop the process.
 
 ## 9. CLI surface
 
@@ -297,6 +319,7 @@ signal boundary, which keeps the control flow visible on the page.
 | `disable` | `<id>` | `Disabled a3f91c` | 0 / 1 |
 | `run` | `--ring-seconds`, `--snooze-minutes`, `--max-snoozes`, `--once` | Startup summary, then event lines | 0 |
 | `--version` | — | `alarm-clock-cli 0.1.0` | 0 |
+| `demo` | `--ring-seconds` | Rings a throwaway alarm immediately. Undocumented in `--help`; exists so the banner and bell can be checked without scheduling anything | 0 |
 
 Invocable as `python3 -m alarm_clock <cmd>` always, and as `alarm <cmd>` after an
 optional `pip install -e .` (a `pyproject.toml` with **zero runtime
@@ -333,7 +356,7 @@ several prefix matches -> error listing every candidate
 | Machine sleeps mid-ring | Ring ends early on wake; treated as the ring having elapsed → snooze |
 | Two `alarm run` instances | Both ring. Known limitation; no lock file (open question Q4) |
 | Terminal does not support the bell | Banner still prints; it is the primary signal, the bell is secondary |
-| Non-TTY stdout (piped/redirected) | Countdown redraw falls back to one line per update, no `\r` |
+| Non-TTY stdout (piped/redirected) | Countdown redraw falls back to one line every 15 s, no `\r`. The run loop also forces line buffering, so `alarm run > file` shows events as they happen instead of when a block buffer fills |
 | Clock changed manually while running | Next tick re-derives from the wall clock; alarm follows the new time |
 
 ---
@@ -347,7 +370,7 @@ several prefix matches -> error listing every candidate
 | Bell may be silent in some terminals | User misses the alarm | Banner is the primary alert; README notes enabling the audible or visual bell |
 | Two loops double-ring | Confusing | Documented; Q4 open for review |
 | No lock on the store | Simultaneous writes, last wins | Sub-millisecond atomic writes; single-user tool; documented |
-| Rendering of box characters | Cosmetic breakage | Pure ASCII fallback banner if review prefers it |
+| Rendering of box characters | Cosmetic breakage | Resolved: the banner is pure ASCII, so there is nothing left to break |
 
 ---
 
@@ -376,4 +399,8 @@ alarm-clock-cli/
     └── runner.py
 ```
 
-Estimated size: roughly 600–800 lines of Python, no file over ~150 lines.
+**As built:** 1,090 lines of Python across nine modules. All but one are
+under 140 lines; `runner.py` is 290, because splitting the loop from the
+outcome handling would have separated things that are read together. The
+estimate of 600–800 lines was low - the error paths and the reload logic were
+each larger than expected.

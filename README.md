@@ -4,68 +4,162 @@ A terminal alarm clock in Python. No web UI, no database, no third-party
 packages — just the standard library and a process you leave running in a
 terminal tab.
 
-> ## 📋 Status: design under review — no code yet
->
-> This repository currently contains **only the planning documents**. The
-> implementation starts once they are approved.
-
----
-
-## The documents
-
-| Document | What it covers |
-|---|---|
-| **[Requirements](docs/requirements.md)** | What it does and deliberately doesn't do, the locked scope decisions, functional requirements FR-1…FR-12, and the acceptance criteria |
-| **[Design](docs/design.md)** | Architecture, module map, data model, time semantics, the run loop, the ring/snooze state machine, and every edge case with its decided behaviour |
-| **[Implementation plan](docs/implementation-plan.md)** | Six build phases, the manual verification checklist, effort estimate, and definition of done |
-
-**Suggested reading order:** requirements → design → plan. Each builds on the one
-before it.
-
----
-
-## What is being built, in one screen
-
-```bash
-$ alarm add 07:30 --label "Standup"
-Added a3f91c — 07:30 "Standup", first ring Tue 22 Sep 2026 07:30
-
-$ alarm list
-ID      TIME   LABEL     NEXT FIRE
-a3f91c  07:30  Standup   Tue 22 Sep 2026 07:30
-
-$ alarm run
-Watching 1 alarm. Keep this terminal open.
-  a3f91c  07:30  Standup   Tue 22 Sep 2026 07:30
+```
++============================================================+
+|                         A L A R M                          |
++============================================================+
+|  Standup                                                   |
+|  Scheduled 07:30   .   Now 07:30:00                        |
++============================================================+
+|  Ctrl-C to dismiss  .  ignore to snooze 9m (3 left)        |
++============================================================+
+  ringing -  47s left
 ```
 
-…and at 07:30 the terminal fills with a banner and beeps until it is dismissed
-with `Ctrl-C` or left alone to snooze.
-
-## The shape of it
-
-- **Foreground only.** `alarm run` holds a terminal. Close it and nothing rings.
-- **Terminal bell + banner.** No audio files, no desktop notifications.
-- **One-off alarms.** Add, list, remove, enable, disable, snooze, dismiss.
-  Recurring alarms and timers are explicitly out of scope for v0.1.
-- **Standard library only.** Python 3.9+, `git clone` and run.
-
-The reasoning behind each of these — and what was rejected — is in
-[requirements §2](docs/requirements.md#2-locked-scope-decisions).
+> **It only rings while `alarm run` is open.** This is a foreground program by
+> design — it is not a daemon and it does not survive closing the terminal,
+> logging out, or rebooting. Leave it in a spare tab or a `tmux` pane.
 
 ---
 
-## Reviewing
+## Install
 
-The four questions worth a decision before code is written are collected in
-[requirements §8](docs/requirements.md#8-open-questions-for-review): the snooze
-interval, whether fired alarms are kept or deleted, the missed-alarm catch-up
-window, and whether a second `alarm run` should be refused.
+Needs Python 3.9 or newer. Nothing else.
 
-One decision worth challenging explicitly: **v0.1 ships without an automated
-test suite**, by decision. The consequences and the mitigation are set out in
-[requirements §2](docs/requirements.md#2-locked-scope-decisions) and
-[design §11](docs/design.md#11-risks-and-limitations).
+```bash
+git clone https://github.com/Shailesh-Kala/alarm-clock-cli.git
+cd alarm-clock-cli
+python3 -m alarm_clock --help
+```
+
+Optionally put `alarm` on your PATH:
+
+```bash
+pip install -e .
+```
+
+Every example below works either way — `alarm <command>` or
+`python3 -m alarm_clock <command>`.
+
+## Use it
+
+```bash
+alarm add 07:30 --label "Standup"     # schedule it
+alarm list                            # see what is armed
+alarm run                             # leave this running
+```
+
+```
+$ alarm add 07:30 --label "Standup"
+Added a3f91c 07:30 "Standup" - first ring Tue 22 Sep 2026 07:30
+
+$ alarm list
+ID      TIME   LABEL    NEXT FIRE
+a3f91c  07:30  Standup  Tue 22 Sep 2026 07:30
+
+$ alarm run
+Watching 1 alarm. Keep this terminal open; Ctrl-C to stop.
+  a3f91c  07:30  Standup               Tue 22 Sep 2026 07:30
+```
+
+When it goes off, the banner appears and the terminal beeps. Then either:
+
+- **`Ctrl-C`** — dismiss it. The loop keeps running for your other alarms.
+- **do nothing** — after 60 seconds it snoozes for 9 minutes and comes back, up
+  to 3 times, then gives up and disables itself.
+
+`Ctrl-C` while nothing is ringing stops the program.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `alarm add HH:MM [--label TEXT]` | Schedule a one-off alarm at the next occurrence of that time |
+| `alarm list [--all]` | Show armed alarms; `--all` includes disabled ones |
+| `alarm remove ID [ID...]` | Delete alarms permanently |
+| `alarm enable ID` | Re-arm a disabled alarm |
+| `alarm disable ID` | Keep an alarm but stop it ringing |
+| `alarm run [options]` | Watch the clock and ring alarms |
+| `alarm --version` | Print the version |
+
+Anywhere an `ID` is accepted, an unambiguous prefix works too — `alarm remove a3f`.
+
+Options for `run`, useful for trying it out without waiting for real time to pass:
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--ring-seconds N` | 60 | How long it rings before snoozing |
+| `--snooze-minutes N` | 9 | How long a snooze lasts |
+| `--max-snoozes N` | 3 | Snoozes before it gives up |
+| `--once` | off | Exit after the first alarm finishes |
+
+```bash
+# a fast demonstration of the whole snooze cycle
+alarm add $(date -v+1M +%H:%M) --label "Test"
+alarm run --ring-seconds 3 --snooze-minutes 1 --max-snoozes 2
+```
+
+There is also an undocumented `alarm demo`, which rings a throwaway alarm right
+now so you can check the banner and the bell without scheduling anything.
+
+## Times
+
+`HH:MM`, 24-hour. `7:30` and `07:30` both work; anything else is rejected.
+
+An alarm always means **the next time that clock reading comes around** — add
+`07:30` at 09:00 and it fires tomorrow morning. `alarm add` always prints the
+absolute date and time it resolved to, so this is never a guess.
+
+## Where alarms live
+
+A single JSON file, in the first of these that applies:
+
+1. `$ALARM_CLOCK_HOME/alarms.json`
+2. `$XDG_DATA_HOME/alarm-clock/alarms.json`
+3. `~/.local/share/alarm-clock/alarms.json`
+
+`alarm --help` prints the resolved path. The file is plain JSON and safe to read
+or hand-edit; writes are atomic, so an interrupted write cannot cost you your
+alarms.
+
+A running `alarm run` notices changes to that file, so you can add or remove
+alarms from a second terminal without restarting it.
+
+## If you cannot hear the bell
+
+The alarm writes the ASCII bell character, which many terminals mute by default.
+The banner is the primary alert for exactly that reason, but to get a sound:
+
+- **macOS Terminal** — Settings → Profiles → Advanced → Bell: tick *Audible bell*
+  (or *Visual bell* for a flash).
+- **iTerm2** — Settings → Profiles → Terminal → Notifications: tick
+  *Silence bell* **off**.
+- **tmux** — `set -g bell-action any` in `~/.tmux.conf`.
+
+## Limitations
+
+Deliberate, and worth knowing before you rely on it:
+
+- **Foreground only.** Close the terminal and nothing rings. No daemon, no
+  launchd, no reboot survival.
+- **One-off alarms only.** No recurring or repeating alarms in v0.1.
+- **Terminal alert only.** No sound files, no desktop notifications.
+- **Sleep.** If the machine is asleep when an alarm is due, it rings on wake if
+  it is less than two minutes late; anything later is reported as missed rather
+  than going off at the wrong time.
+- **Two `alarm run` processes will both ring.** There is no lock.
+- **No automated test suite in v0.1** — see the
+  [manual verification checklist](docs/implementation-plan.md#3-manual-verification-checklist).
+
+## Documentation
+
+The planning documents this was built from, kept current with the code:
+
+| Document | Contents |
+|---|---|
+| [Requirements](docs/requirements.md) | Scope decisions, functional requirements, acceptance criteria |
+| [Design](docs/design.md) | Architecture, data model, run loop, ring/snooze state machine, edge cases |
+| [Implementation plan](docs/implementation-plan.md) | Build phases, manual verification checklist, definition of done |
 
 ## License
 

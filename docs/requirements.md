@@ -1,6 +1,6 @@
 # Requirements — `alarm-clock-cli`
 
-**Status:** Draft for review · **Date:** 2026-09-21 · **Owner:** Shailesh Kala
+**Status:** Implemented in v0.1.0 · **Date:** 2026-09-21 · **Owner:** Shailesh Kala
 
 ---
 
@@ -224,8 +224,9 @@ hand (see the checklist in the implementation plan):
 
 ## 8. Open questions for review
 
-Nothing below blocks implementation; each has a stated default that will be used
-unless review says otherwise.
+None of these blocked implementation. **v0.1.0 was built with the stated
+defaults**, and each remains open - changing any of them is a small change to
+`config.py`, not a redesign.
 
 - **Q1.** Default snooze of 9 minutes is the traditional clock-radio interval.
   Is a rounder default (5 or 10) preferred?
@@ -235,5 +236,5 @@ unless review says otherwise.
 - **Q3.** The catch-up window for missed alarms is 120 s. Too short for a laptop
   that sleeps briefly mid-ring?
 - **Q4.** Should `alarm run` refuse to start if another instance is already
-  running? Two loops would ring the same alarm twice. Current plan: documented
+  running? Two loops would ring the same alarm twice. As built: documented
   limitation, no lock file (D1 keeps the runtime model minimal).
